@@ -185,7 +185,7 @@ class History: ItemsContainer { // swiftlint:disable:this type_body_length
       }
 
       if Defaults[.pasteByDefault] {
-        Clipboard.shared.paste()
+        paste()
       }
     } else {
       switch HistoryItemAction(modifierFlags) {
@@ -195,11 +195,11 @@ class History: ItemsContainer { // swiftlint:disable:this type_body_length
       case .paste:
         AppState.shared.popup.close()
         Clipboard.shared.copy(item.item)
-        Clipboard.shared.paste()
+        paste()
       case .pasteWithoutFormatting:
         AppState.shared.popup.close()
         Clipboard.shared.copy(item.item, removeFormatting: true)
-        Clipboard.shared.paste()
+        paste()
       case .pasteWithTransformation:
         AppState.shared.popup.close()
         if let activeID = Defaults[.activeTransformationID],
@@ -208,7 +208,7 @@ class History: ItemsContainer { // swiftlint:disable:this type_body_length
         } else {
           Clipboard.shared.copy(item.item)
         }
-        Clipboard.shared.paste()
+        paste()
       case .unknown:
         return
       }
@@ -242,7 +242,7 @@ class History: ItemsContainer { // swiftlint:disable:this type_body_length
       }
 
       if Defaults[.pasteByDefault] {
-        Clipboard.shared.paste()
+        paste()
       }
     } else {
       switch HistoryItemAction(modifierFlags) {
@@ -252,11 +252,11 @@ class History: ItemsContainer { // swiftlint:disable:this type_body_length
       case .paste:
         AppState.shared.popup.close()
         Clipboard.shared.copy(item.item)
-        Clipboard.shared.paste()
+        paste()
       case .pasteWithoutFormatting:
         AppState.shared.popup.close()
         Clipboard.shared.copy(item.item, removeFormatting: true)
-        Clipboard.shared.paste()
+        paste()
       case .pasteWithTransformation:
         AppState.shared.popup.close()
         if let activeID = Defaults[.activeTransformationID],
@@ -265,7 +265,7 @@ class History: ItemsContainer { // swiftlint:disable:this type_body_length
         } else {
           Clipboard.shared.copy(item.item)
         }
-        Clipboard.shared.paste()
+        paste()
       case .unknown:
         return
       }
@@ -395,5 +395,13 @@ class History: ItemsContainer { // swiftlint:disable:this type_body_length
     return NSApp.currentEvent?.modifierFlags
       .intersection(.deviceIndependentFlagsMask)
       .subtracting([.capsLock, .numericPad, .function]) ?? []
+  }
+
+  @MainActor
+  private func paste() {
+    Task { @MainActor in
+      try? await Task.sleep(for: .milliseconds(150))
+      Clipboard.shared.paste()
+    }
   }
 }
