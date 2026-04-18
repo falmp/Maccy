@@ -68,7 +68,10 @@ class Clipboard {
     pasteboard.setString(string, forType: .string)
     pasteboard.setString("", forType: .fromMaccy)
     sync()
-    checkForChangesInPasteboard()
+    
+    Task {
+      checkForChangesInPasteboard()
+    }
   }
 
   @MainActor
@@ -82,17 +85,9 @@ class Clipboard {
       contents = clearFormatting(contents)
     }
 
-    // Apply global transformation if active
-    if let activeID = Defaults[.activeTransformationID],
-       let transformation = Defaults[.transformations].first(where: { $0.id == activeID }),
-       let text = item.text {
-      let transformedText = transformation.apply(to: text)
-      pasteboard.setString(transformedText, forType: .string)
-    } else {
-      for content in contents {
-        guard content.type != NSPasteboard.PasteboardType.fileURL.rawValue else { continue }
-        pasteboard.setData(content.value, forType: NSPasteboard.PasteboardType(content.type))
-      }
+    for content in contents {
+      guard content.type != NSPasteboard.PasteboardType.fileURL.rawValue else { continue }
+      pasteboard.setData(content.value, forType: NSPasteboard.PasteboardType(content.type))
     }
 
     // Use writeObjects for file URLs so that multiple files that are copied actually work.
