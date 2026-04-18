@@ -88,7 +88,7 @@ struct TransformationsSettingsPane: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                       if step.caseInsensitive {
-                        Image(systemName: "case")
+                        Image(systemName: "textformat")
                           .font(.caption2)
                           .help("Case Insensitive")
                       }
