@@ -103,8 +103,10 @@ class Clipboard {
     pasteboard.setString(item.application ?? "", forType: .source)
     sync()
 
-    Notifier.notify(body: item.title, sound: .knock)
-    checkForChangesInPasteboard()
+    Task {
+      Notifier.notify(body: item.title, sound: .knock)
+      checkForChangesInPasteboard()
+    }
   }
 
   @MainActor
@@ -114,7 +116,6 @@ class Clipboard {
     if let text = item.text {
       pasteboard.setString(transform(text), forType: .string)
     } else {
-      // If no plain text, just copy normally as a fallback (shouldn't happen for text items)
       copy(item)
       return
     }
@@ -123,12 +124,13 @@ class Clipboard {
     pasteboard.setString(item.application ?? "", forType: .source)
     sync()
 
-    Notifier.notify(body: item.title, sound: .knock)
-    checkForChangesInPasteboard()
+    Task {
+      Notifier.notify(body: item.title, sound: .knock)
+      checkForChangesInPasteboard()
+    }
   }
 
   // Based on https://github.com/Clipy/Clipy/blob/develop/Clipy/Sources/Services/PasteService.swift.
-  @MainActor
   func paste() {
     Accessibility.check()
 
@@ -174,9 +176,7 @@ class Clipboard {
 
     changeCount = pasteboard.changeCount
 
-    let isFromMaccy = pasteboard.pasteboardItems?.contains(where: { $0.types.contains(.fromMaccy) }) == true
-
-    if !isFromMaccy {
+    if pasteboard.pasteboardItems?.contains(where: { $0.types.contains(.fromMaccy) }) != true {
       // External copy occurred. Stop the current paste stack.
       // Maybe queue it into the paste stack? Configurable behaviour?
       AppState.shared.history.interruptPasteStack()
@@ -240,18 +240,15 @@ class Clipboard {
 
     let historyItem = HistoryItem(contents: contents)
 
-    if !isFromMaccy {
-      // New external copy. If transformation is active by default, transform the clipboard now.
+    // Apply transformation if enabled by default and not from Maccy
+    if pasteboard.pasteboardItems?.contains(where: { $0.types.contains(.fromMaccy) }) != true {
       if Defaults[.applyTransformationByDefault],
          let activeID = Defaults[.activeTransformationID],
          let transformation = Defaults[.transformations].first(where: { $0.id == activeID }),
          let text = historyItem.text {
         let transformed = transformation.apply(to: text)
         if transformed != text {
-          // Transform the clipboard.
           self.copy(transformed)
-          // We return here because self.copy will trigger another checkForChangesInPasteboard
-          // which will add the transformed item to history.
           return
         }
       }

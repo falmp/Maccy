@@ -16,9 +16,9 @@
 "PasteWithTransformation" = "Paste with transformation";
 "Modifiers" = "Customize the behavior when selecting item:\n• Select with %@ pressed to copy item.\n• Select with %@ pressed to copy and paste item.\n• Select with %@ pressed to copy, clear formatting, and paste item.\n• Select with %@ pressed to copy, apply transformation, and paste item.";
 "Search" = "Search:";
-"Transformation" = "Transformation:";
 "Exact" = "Exact";
 "Fuzzy" = "Fuzzy";
 "Regex" = "Regular expressions";
 "Mixed" = "Mixed";
 "NotificationsAndSounds" = "Notifications and sounds 􀱁";
+"None" = "None";

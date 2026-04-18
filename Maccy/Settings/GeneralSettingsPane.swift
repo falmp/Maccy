@@ -101,7 +101,7 @@ struct GeneralSettingsPane: View {
           .onChange(refreshModifiers)
 
           Picker("", selection: $activeTransformationID) {
-            Text("None").tag(UUID?.none)
+            Text("None", tableName: "GeneralSettings").tag(UUID?.none)
             ForEach(transformations) { transformation in
               Text(transformation.name).tag(UUID?.some(transformation.id))
             }

@@ -38,7 +38,8 @@ struct TransformationsSettingsPane: View {
 
             ControlGroup {
               Button(action: {
-                let newTransformation = Transformation(name: "New Transformation")
+                let name = NSLocalizedString("New Transformation", tableName: "TransformationsSettings", comment: "")
+                let newTransformation = Transformation(name: name)
                 transformations.append(newTransformation)
                 selectedTransformationID = newTransformation.id
                 focusedTransformationID = newTransformation.id
@@ -80,7 +81,7 @@ struct TransformationsSettingsPane: View {
               List(selection: $selectedStepID) {
                 ForEach(Array(transformation.steps.enumerated()), id: \.element.id) { index, step in
                   HStack {
-                    Text(LocalizedStringKey(step.type.rawValue))
+                    Text(LocalizedStringKey(step.type.rawValue), tableName: "TransformationsSettings")
                       .font(.body)
                     if step.type == .replace {
                       Spacer()
@@ -90,7 +91,7 @@ struct TransformationsSettingsPane: View {
                       if step.caseInsensitive {
                         Image(systemName: "textformat")
                           .font(.caption2)
-                          .help("Case Insensitive")
+                          .help(Text("Case Insensitive", tableName: "TransformationsSettings"))
                       }
                     }
                   }
@@ -121,8 +122,10 @@ struct TransformationsSettingsPane: View {
                 ControlGroup {
                   Menu {
                     ForEach(StepType.allCases) { type in
-                      Button(LocalizedStringKey(type.rawValue)) {
+                      Button(action: {
                         addStep(to: transformation, type: type)
+                      }) {
+                        Text(LocalizedStringKey(type.rawValue), tableName: "TransformationsSettings")
                       }
                     }
                   } label: {
@@ -232,17 +235,27 @@ struct EditStepView: View {
         .font(.headline)
 
       Form {
-        TextField("Search for", text: $search)
-        TextField("Replace with", text: $replacement)
-        Toggle("Case Insensitive", isOn: $caseInsensitive)
+        TextField(text: $search) {
+          Text("Search for", tableName: "TransformationsSettings")
+        }
+        TextField(text: $replacement) {
+          Text("Replace with", tableName: "TransformationsSettings")
+        }
+        Toggle(isOn: $caseInsensitive) {
+          Text("Case Insensitive", tableName: "TransformationsSettings")
+        }
       }
 
       HStack {
-        Button("Cancel") { dismiss() }
+        Button(action: { dismiss() }) {
+          Text("Cancel", tableName: "TransformationsSettings")
+        }
         Spacer()
-        Button("Save") {
+        Button(action: {
           onSave(TransformationStep(type: .replace, search: search, replacement: replacement, caseInsensitive: caseInsensitive))
           dismiss()
+        }) {
+          Text("Save", tableName: "TransformationsSettings")
         }
         .buttonStyle(.borderedProminent)
         .disabled(search.isEmpty)
