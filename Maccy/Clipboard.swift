@@ -68,10 +68,7 @@ class Clipboard {
     pasteboard.setString(string, forType: .string)
     pasteboard.setString("", forType: .fromMaccy)
     sync()
-    
-    Task {
-      checkForChangesInPasteboard()
-    }
+    checkForChangesInPasteboard()
   }
 
   @MainActor
@@ -106,10 +103,8 @@ class Clipboard {
     pasteboard.setString(item.application ?? "", forType: .source)
     sync()
 
-    Task {
-      Notifier.notify(body: item.title, sound: .knock)
-      checkForChangesInPasteboard()
-    }
+    Notifier.notify(body: item.title, sound: .knock)
+    checkForChangesInPasteboard()
   }
 
   @MainActor
@@ -128,10 +123,8 @@ class Clipboard {
     pasteboard.setString(item.application ?? "", forType: .source)
     sync()
 
-    Task {
-      Notifier.notify(body: item.title, sound: .knock)
-      checkForChangesInPasteboard()
-    }
+    Notifier.notify(body: item.title, sound: .knock)
+    checkForChangesInPasteboard()
   }
 
   // Based on https://github.com/Clipy/Clipy/blob/develop/Clipy/Sources/Services/PasteService.swift.

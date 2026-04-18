@@ -400,7 +400,7 @@ class History: ItemsContainer { // swiftlint:disable:this type_body_length
   @MainActor
   private func paste() {
     Task { @MainActor in
-      try? await Task.sleep(for: .milliseconds(150))
+      try? await Task.sleep(for: .milliseconds(100))
       Clipboard.shared.paste()
     }
   }
