@@ -68,7 +68,7 @@ class Clipboard {
     pasteboard.setString(string, forType: .string)
     pasteboard.setString("", forType: .fromMaccy)
     sync()
-    checkForChangesInPasteboard()
+    changeCount = pasteboard.changeCount
   }
 
   @MainActor
@@ -103,9 +103,10 @@ class Clipboard {
     pasteboard.setString(item.application ?? "", forType: .source)
     sync()
 
+    changeCount = pasteboard.changeCount
+
     Task {
       Notifier.notify(body: item.title, sound: .knock)
-      checkForChangesInPasteboard()
     }
   }
 
@@ -125,13 +126,15 @@ class Clipboard {
     pasteboard.setString(item.application ?? "", forType: .source)
     sync()
 
+    changeCount = pasteboard.changeCount
+
     Task {
       Notifier.notify(body: item.title, sound: .knock)
-      checkForChangesInPasteboard()
     }
   }
 
   // Based on https://github.com/Clipy/Clipy/blob/develop/Clipy/Sources/Services/PasteService.swift.
+  @MainActor
   func paste() {
     Accessibility.check()
 
@@ -251,9 +254,10 @@ class Clipboard {
          let text = historyItem.text {
         let transformed = transformation.apply(to: text)
         if transformed != text {
-          // Transform the clipboard. This will trigger another checkForChangesInPasteboard
-          // but with isFromMaccy = true, so it will be ignored here.
+          // Transform the clipboard.
           self.copy(transformed)
+          // We return here because self.copy will trigger another checkForChangesInPasteboard
+          // which will add the transformed item to history.
           return
         }
       }
