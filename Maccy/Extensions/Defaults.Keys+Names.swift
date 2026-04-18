@@ -1,6 +1,19 @@
 import AppKit
 import Defaults
 
+extension Sorter.By {
+  var sortDescriptor: SortDescriptor<HistoryItem> {
+    switch self {
+    case .lastCopiedAt:
+      return SortDescriptor(\.lastCopiedAt, order: .reverse)
+    case .firstCopiedAt:
+      return SortDescriptor(\.firstCopiedAt, order: .reverse)
+    case .numberOfCopies:
+      return SortDescriptor(\.numberOfCopies, order: .reverse)
+    }
+  }
+}
+
 struct StorageType {
   static let files = StorageType(types: [.fileURL])
   static let images = StorageType(types: [.png, .tiff])
@@ -59,4 +72,7 @@ extension Defaults.Keys {
   static let windowPosition = Key<NSPoint>("windowPosition", default: NSPoint(x: 0.5, y: 0.8))
   static let showApplicationIcons = Key<Bool>("showApplicationIcons", default: false)
   static let previewWidth = Key<CGFloat>("previewWidth", default: 400)
+  static let transformations = Key<[Transformation]>("transformations", default: [])
+  static let activeTransformationID = Key<UUID?>("activeTransformationID", default: nil)
+  static let applyTransformationByDefault = Key<Bool>("applyTransformationByDefault", default: false)
 }

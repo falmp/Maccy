@@ -81,9 +81,17 @@ class Clipboard {
       contents = clearFormatting(contents)
     }
 
-    for content in contents {
-      guard content.type != NSPasteboard.PasteboardType.fileURL.rawValue else { continue }
-      pasteboard.setData(content.value, forType: NSPasteboard.PasteboardType(content.type))
+    // Apply global transformation if active
+    if let activeID = Defaults[.activeTransformationID],
+       let transformation = Defaults[.transformations].first(where: { $0.id == activeID }),
+       let text = item.text {
+      let transformedText = transformation.apply(to: text)
+      pasteboard.setString(transformedText, forType: .string)
+    } else {
+      for content in contents {
+        guard content.type != NSPasteboard.PasteboardType.fileURL.rawValue else { continue }
+        pasteboard.setData(content.value, forType: NSPasteboard.PasteboardType(content.type))
+      }
     }
 
     // Use writeObjects for file URLs so that multiple files that are copied actually work.
@@ -97,6 +105,28 @@ class Clipboard {
       return pasteItem
     }
     pasteboard.writeObjects(fileURLItems)
+
+    pasteboard.setString("", forType: .fromMaccy)
+    pasteboard.setString(item.application ?? "", forType: .source)
+    sync()
+
+    Task {
+      Notifier.notify(body: item.title, sound: .knock)
+      checkForChangesInPasteboard()
+    }
+  }
+
+  @MainActor
+  func copy(_ item: HistoryItem, transform: (String) -> String) {
+    pasteboard.clearContents()
+
+    if let text = item.text {
+      pasteboard.setString(transform(text), forType: .string)
+    } else {
+      // If no plain text, just copy normally as a fallback (shouldn't happen for text items)
+      copy(item)
+      return
+    }
 
     pasteboard.setString("", forType: .fromMaccy)
     pasteboard.setString(item.application ?? "", forType: .source)

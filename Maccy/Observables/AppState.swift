@@ -141,6 +141,13 @@ class AppState: Sendable {
               .modelContainer(Storage.shared.container)
           },
           Settings.Pane(
+            identifier: Settings.PaneIdentifier.transformations,
+            title: NSLocalizedString("Transformations", tableName: "TransformationsSettings", comment: ""),
+            toolbarIcon: NSImage(systemSymbolName: "wand.and.stars", accessibilityDescription: nil)!
+          ) {
+            TransformationsSettingsPane()
+          },
+          Settings.Pane(
             identifier: Settings.PaneIdentifier.ignore,
             title: NSLocalizedString("Title", tableName: "IgnoreSettings", comment: ""),
             toolbarIcon: NSImage.nosign!

@@ -122,6 +122,7 @@ class Popup {
     close()
   }
 
+  @MainActor
   private func handleEvent(_ event: NSEvent) -> NSEvent? {
     switch event.type {
     case .keyDown:
@@ -133,6 +134,7 @@ class Popup {
     }
   }
 
+  @MainActor
   private func handleKeyDown(_ event: NSEvent) -> NSEvent? {
     if isHotKeyCode(Int(event.keyCode)) {
       if let item = History.shared.pressedShortcutItem {

@@ -3,6 +3,7 @@ import Defaults
 import KeyboardShortcuts
 import LaunchAtLogin
 import Settings
+import Foundation
 
 struct GeneralSettingsPane: View {
   private let notificationsURL = URL(
@@ -10,10 +11,14 @@ struct GeneralSettingsPane: View {
   )
 
   @Default(.searchMode) private var searchMode
+  @Default(.transformations) private var transformations
+  @Default(.activeTransformationID) private var activeTransformationID
+  @Default(.applyTransformationByDefault) private var applyTransformationByDefault
 
-  @State private var copyModifier = HistoryItemAction.copy.modifierFlags.description
-  @State private var pasteModifier = HistoryItemAction.paste.modifierFlags.description
-  @State private var pasteWithoutFormatting = HistoryItemAction.pasteWithoutFormatting.modifierFlags.description
+  @State private var copyModifier = ""
+  @State private var pasteModifier = ""
+  @State private var pasteWithoutFormatting = ""
+  @State private var pasteWithTransformation = ""
 
   @State private var updater = SoftwareUpdater()
 
@@ -35,10 +40,8 @@ struct GeneralSettingsPane: View {
       Settings.Section(label: { Text("Open", tableName: "GeneralSettings") }) {
         KeyboardShortcuts.Recorder(for: .popup, onChange: { newShortcut in
           if newShortcut == nil {
-            // No shortcut is recorded. Remove keys monitor
             AppState.shared.popup.deinitEventsMonitor()
           } else {
-            // User is using shortcut. Ensure keys monitor is initialized
             AppState.shared.popup.initEventsMonitor()
           }
         })
@@ -91,9 +94,26 @@ struct GeneralSettingsPane: View {
         .onChange(refreshModifiers)
         .fixedSize()
 
+        HStack {
+          Defaults.Toggle(key: .applyTransformationByDefault) {
+            Text("PasteWithTransformation", tableName: "GeneralSettings")
+          }
+          .onChange(refreshModifiers)
+
+          Picker("", selection: $activeTransformationID) {
+            Text("None").tag(UUID?.none)
+            ForEach(transformations) { transformation in
+              Text(transformation.name).tag(UUID?.some(transformation.id))
+            }
+          }
+          .labelsHidden()
+          .controlSize(.small)
+          .fixedSize()
+        }
+
         Text(String(
           format: NSLocalizedString("Modifiers", tableName: "GeneralSettings", comment: ""),
-          copyModifier, pasteModifier, pasteWithoutFormatting
+          copyModifier, pasteModifier, pasteWithoutFormatting, pasteWithTransformation
         ))
         .fixedSize(horizontal: false, vertical: true)
         .foregroundStyle(.gray)
@@ -108,12 +128,27 @@ struct GeneralSettingsPane: View {
         }
       }
     }
+    .onAppear(perform: refreshModifiers)
+  }
+
+  private func refreshModifiers() {
+    copyModifier = modifierDescription(HistoryItemAction.copy)
+    pasteModifier = modifierDescription(HistoryItemAction.paste)
+    pasteWithoutFormatting = modifierDescription(HistoryItemAction.pasteWithoutFormatting)
+    pasteWithTransformation = modifierDescription(HistoryItemAction.pasteWithTransformation)
   }
 
   private func refreshModifiers(_ sender: Sendable) {
-    copyModifier = HistoryItemAction.copy.modifierFlags.description
-    pasteModifier = HistoryItemAction.paste.modifierFlags.description
-    pasteWithoutFormatting = HistoryItemAction.pasteWithoutFormatting.modifierFlags.description
+    refreshModifiers()
+  }
+
+  private func modifierDescription(_ action: HistoryItemAction) -> String {
+    let description = action.modifierFlags.description
+    if description.isEmpty {
+      return "⏎"
+    } else {
+      return description
+    }
   }
 }
 

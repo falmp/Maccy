@@ -6,6 +6,7 @@ enum HistoryItemAction {
   case copy
   case paste
   case pasteWithoutFormatting
+  case pasteWithTransformation
 
   init(_ modifierFlags: NSEvent.ModifierFlags) {  // swiftlint:disable:this cyclomatic_complexity
     switch modifierFlags {
@@ -31,6 +32,12 @@ enum HistoryItemAction {
       self = .pasteWithoutFormatting
     case [.command, .shift] where Defaults[.pasteByDefault] && Defaults[.removeFormattingByDefault]:
       self = .paste
+    case [.command, .option] where !Defaults[.applyTransformationByDefault]:
+      self = .pasteWithTransformation
+    case [.command, .option] where Defaults[.applyTransformationByDefault]:
+      self = .paste
+    case [] where Defaults[.applyTransformationByDefault]:
+      self = .pasteWithTransformation
     default:
       self = .unknown
     }
@@ -40,11 +47,11 @@ enum HistoryItemAction {
     switch self {
     case .copy where !Defaults[.pasteByDefault]:
       return .command
-    case .paste where Defaults[.pasteByDefault] && !Defaults[.removeFormattingByDefault]:
+    case .paste where Defaults[.pasteByDefault] && !Defaults[.removeFormattingByDefault] && !Defaults[.applyTransformationByDefault]:
       return .command
     case .pasteWithoutFormatting where Defaults[.pasteByDefault] && Defaults[.removeFormattingByDefault]:
       return .command
-    case .paste where !Defaults[.pasteByDefault] && !Defaults[.removeFormattingByDefault]:
+    case .paste where !Defaults[.pasteByDefault] && !Defaults[.removeFormattingByDefault] && !Defaults[.applyTransformationByDefault]:
       return .option
     case .pasteWithoutFormatting where !Defaults[.pasteByDefault] && Defaults[.removeFormattingByDefault]:
       return .option
@@ -60,6 +67,12 @@ enum HistoryItemAction {
       return [.command, .shift]
     case .paste where Defaults[.pasteByDefault] && Defaults[.removeFormattingByDefault]:
       return [.command, .shift]
+    case .pasteWithTransformation where !Defaults[.applyTransformationByDefault]:
+      return [.command, .option]
+    case .paste where Defaults[.applyTransformationByDefault]:
+      return [.command, .option]
+    case .pasteWithTransformation where Defaults[.applyTransformationByDefault]:
+      return []
     default:
       return []
     }
