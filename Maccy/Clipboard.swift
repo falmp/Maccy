@@ -87,9 +87,6 @@ class Clipboard {
       pasteboard.setData(content.value, forType: NSPasteboard.PasteboardType(content.type))
     }
 
-    // Use writeObjects for file URLs so that multiple files that are copied actually work.
-    // Only do this for file URLs because it causes an issue with some other data types (like formatted text)
-    // where the item is pasted more than once.
     let fileURLItems: [NSPasteboardItem] = contents.compactMap { item in
       guard item.type == NSPasteboard.PasteboardType.fileURL.rawValue else { return nil }
       guard let value = item.value else { return nil }
@@ -130,24 +127,34 @@ class Clipboard {
     }
   }
 
-  // Based on https://github.com/Clipy/Clipy/blob/develop/Clipy/Sources/Services/PasteService.swift.
+  @MainActor
+  func reapplyCurrentTransformation() {
+    guard let activeID = Defaults[.activeTransformationID],
+          let transformation = Defaults[.transformations].first(where: { $0.id == activeID }),
+          let text = pasteboard.string(forType: .string) else {
+      return
+    }
+
+    let transformed = transformation.apply(to: text)
+    if transformed != text {
+      pasteboard.clearContents()
+      pasteboard.setString(transformed, forType: .string)
+      pasteboard.setString("", forType: .fromMaccy)
+      self.changeCount = pasteboard.changeCount
+    }
+  }
+
   func paste() {
     Accessibility.check()
 
-    // Add flag that left/right modifier key has been pressed.
-    // See https://github.com/TermiT/Flycut/pull/18 for details.
     let cmdFlag = CGEventFlags(rawValue: UInt64(KeyChord.pasteKeyModifiers.rawValue) | 0x000008)
     var vCode = Sauce.shared.keyCode(for: KeyChord.pasteKey)
 
-    // Force QWERTY keycode when keyboard layout switches to
-    // QWERTY upon pressing ⌘ key (e.g. "Dvorak - QWERTY ⌘").
-    // See https://github.com/p0deje/Maccy/issues/482 for details.
     if KeyboardLayout.current.commandSwitchesToQWERTY && cmdFlag.contains(.maskCommand) {
       vCode = KeyChord.pasteKey.QWERTYKeyCode
     }
 
     let source = CGEventSource(stateID: .combinedSessionState)
-    // Disable local keyboard events while pasting
     source?.setLocalEventsFilterDuringSuppressionState([.permitLocalMouseEvents, .permitSystemDefinedEvents],
                                                        state: .eventSuppressionStateSuppressionInterval)
 
@@ -176,9 +183,9 @@ class Clipboard {
 
     changeCount = pasteboard.changeCount
 
-    if pasteboard.pasteboardItems?.contains(where: { $0.types.contains(.fromMaccy) }) != true {
-      // External copy occurred. Stop the current paste stack.
-      // Maybe queue it into the paste stack? Configurable behaviour?
+    let isFromMaccy = pasteboard.pasteboardItems?.contains(where: { $0.types.contains(.fromMaccy) }) == true
+
+    if !isFromMaccy {
       AppState.shared.history.interruptPasteStack()
     }
 
@@ -191,9 +198,6 @@ class Clipboard {
       return
     }
 
-    // Reading types on NSPasteboard gives all the available
-    // types - even the ones that are not present on the NSPasteboardItem.
-    // See https://github.com/p0deje/Maccy/issues/241.
     if shouldIgnore(Set(pasteboard.types ?? [])) {
       return
     }
@@ -202,10 +206,6 @@ class Clipboard {
       return
     }
 
-    // Some applications (BBEdit, Edge) add 2 items to pasteboard when copying
-    // so it's better to merge all data into a single record.
-    // - https://github.com/p0deje/Maccy/issues/78
-    // - https://github.com/p0deje/Maccy/issues/472
     var contents = [HistoryItemContent]()
     pasteboard.pasteboardItems?.forEach({ item in
       var types = Set(item.types)
@@ -222,9 +222,6 @@ class Clipboard {
         .filter { !$0.rawValue.starts(with: dynamicTypePrefix) }
         .filter { !$0.rawValue.starts(with: microsoftSourcePrefix) }
 
-      // Avoid reading Microsoft Word links from bookmarks and cross-references.
-      // https://github.com/p0deje/Maccy/issues/613
-      // https://github.com/p0deje/Maccy/issues/770
       if types.isSuperset(of: [.microsoftLinkSource, .microsoftObjectLink]) {
         types = types.subtracting([.microsoftLinkSource, .microsoftObjectLink, .pdf])
       }
@@ -240,29 +237,27 @@ class Clipboard {
 
     let historyItem = HistoryItem(contents: contents)
 
-    // Apply transformation if enabled by default and not from Maccy
-    if pasteboard.pasteboardItems?.contains(where: { $0.types.contains(.fromMaccy) }) != true {
+    if #unavailable(macOS 15.0) {
+      try? History.shared.insertIntoStorage(historyItem)
+    }
+    historyItem.application = sourceApp?.bundleIdentifier
+    historyItem.title = historyItem.generateTitle()
+    onNewCopyHooks.forEach({ $0(historyItem) })
+
+    if !isFromMaccy {
       if Defaults[.applyTransformationByDefault],
          let activeID = Defaults[.activeTransformationID],
          let transformation = Defaults[.transformations].first(where: { $0.id == activeID }),
          let text = historyItem.text {
         let transformed = transformation.apply(to: text)
         if transformed != text {
-          self.copy(transformed)
-          return
+          pasteboard.clearContents()
+          pasteboard.setString(transformed, forType: .string)
+          pasteboard.setString("", forType: .fromMaccy)
+          self.changeCount = pasteboard.changeCount
         }
       }
     }
-
-    if #unavailable(macOS 15.0) {
-      // On macOS 14 the history item needs to be inserted into storage directly after creating it.
-      try? History.shared.insertIntoStorage(historyItem)
-    }
-
-    historyItem.application = sourceApp?.bundleIdentifier
-    historyItem.title = historyItem.generateTitle()
-
-    onNewCopyHooks.forEach({ $0(historyItem) })
   }
 
   private func shouldIgnore(_ types: Set<NSPasteboard.PasteboardType>) -> Bool {
@@ -321,9 +316,6 @@ class Clipboard {
     return false
   }
 
-  // Some applications requires window be unfocused and focused back to sync the clipboard.
-  // - Chrome Remote Desktop (https://github.com/p0deje/Maccy/issues/948)
-  // - Netbeans (https://github.com/p0deje/Maccy/issues/879)
   private func sync() {
     guard let app = sourceApp,
           app.bundleURL?.lastPathComponent == "Chrome Remote Desktop.app" ||
@@ -339,13 +331,9 @@ class Clipboard {
     var newContents: [HistoryItemContent] = contents
     let stringContents = contents.filter { NSPasteboard.PasteboardType($0.type) == .string }
 
-    // If there is no string representation of data,
-    // behave like we didn't have to remove formatting.
     if !stringContents.isEmpty {
       newContents = stringContents
 
-      // Preserve file URLs.
-      // https://github.com/p0deje/Maccy/issues/962
       let fileURLContents = contents.filter { NSPasteboard.PasteboardType($0.type) == .fileURL }
       if !fileURLContents.isEmpty {
         newContents += fileURLContents

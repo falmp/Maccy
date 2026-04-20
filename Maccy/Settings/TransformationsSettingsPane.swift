@@ -17,7 +17,6 @@ struct TransformationsSettingsPane: View {
     Settings.Container(contentWidth: 600) {
       Settings.Section(label: { EmptyView() }) {
         HStack(alignment: .top, spacing: 0) {
-          // Master: List of Transformations
           VStack(alignment: .leading, spacing: 5) {
             List(selection: $selectedTransformationID) {
               ForEach($transformations) { $transformation in
@@ -61,22 +60,14 @@ struct TransformationsSettingsPane: View {
 
           Divider().padding(.horizontal)
 
-          // Detail: Steps of the selected Transformation
           VStack(alignment: .leading, spacing: 5) {
             if let id = selectedTransformationID,
                let transformation = transformations.first(where: { $0.id == id }) {
-              VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                  Text(transformation.name)
-                    .font(.headline)
-                  Spacer()
-                }
-              }
-              .padding(.bottom, 5)
-
+              
               Text("Steps", tableName: "TransformationsSettings")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+                .padding(.bottom, 5)
 
               List(selection: $selectedStepID) {
                 ForEach(Array(transformation.steps.enumerated()), id: \.element.id) { index, step in
@@ -91,7 +82,7 @@ struct TransformationsSettingsPane: View {
                       if step.caseInsensitive {
                         Image(systemName: "textformat")
                           .font(.caption2)
-                          .help(Text("Case Insensitive", tableName: "TransformationsSettings"))
+                          .help(Text("Case insensitive", tableName: "TransformationsSettings"))
                       }
                     }
                   }
@@ -200,11 +191,9 @@ struct TransformationsSettingsPane: View {
   private func addStep(to transformation: Transformation, type: StepType) {
     var updated = transformation
     if type == .replace {
-      // For replace, we show the edit sheet immediately
       let newStep = TransformationStep(type: type, search: "", replacement: "")
       updated.steps.append(newStep)
       updateTransformation(updated)
-      // Trigger the edit sheet for the newly added step
       stepToEdit = (updated, updated.steps.count - 1)
       isShowingEditStepSheet = true
     } else {
@@ -231,9 +220,6 @@ struct EditStepView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 15) {
-      Text("Edit Replace Step", tableName: "TransformationsSettings")
-        .font(.headline)
-
       Form {
         TextField(text: $search) {
           Text("Search for", tableName: "TransformationsSettings")
@@ -242,7 +228,7 @@ struct EditStepView: View {
           Text("Replace with", tableName: "TransformationsSettings")
         }
         Toggle(isOn: $caseInsensitive) {
-          Text("Case Insensitive", tableName: "TransformationsSettings")
+          Text("Case insensitive", tableName: "TransformationsSettings")
         }
       }
 

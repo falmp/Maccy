@@ -10,12 +10,8 @@ enum HistoryItemAction {
 
   init(_ modifierFlags: NSEvent.ModifierFlags) {  // swiftlint:disable:this cyclomatic_complexity
     switch modifierFlags {
-    case [.command, .option] where !Defaults[.applyTransformationByDefault]:
-      self = .pasteWithTransformation
-    case [.command, .option] where Defaults[.applyTransformationByDefault]:
-      self = .paste
-    case [] where Defaults[.applyTransformationByDefault]:
-      self = .pasteWithTransformation
+    case [.command, .option]:
+      self = Defaults[.applyTransformationByDefault] ? .paste : .pasteWithTransformation
     case .command where !Defaults[.pasteByDefault]:
       self = .copy
     case .command where Defaults[.pasteByDefault] && !Defaults[.removeFormattingByDefault]:
@@ -67,12 +63,10 @@ enum HistoryItemAction {
       return [.command, .shift]
     case .paste where Defaults[.pasteByDefault] && Defaults[.removeFormattingByDefault]:
       return [.command, .shift]
-    case .pasteWithTransformation where !Defaults[.applyTransformationByDefault]:
-      return [.command, .option]
+    case .pasteWithTransformation:
+      return Defaults[.applyTransformationByDefault] ? [] : [.command, .option]
     case .paste where Defaults[.applyTransformationByDefault]:
       return [.command, .option]
-    case .pasteWithTransformation where Defaults[.applyTransformationByDefault]:
-      return []
     default:
       return []
     }

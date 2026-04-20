@@ -66,7 +66,6 @@ struct GeneralSettingsPane: View {
       }
 
       Settings.Section(
-        bottomDivider: true,
         label: { Text("Search", tableName: "GeneralSettings") }
       ) {
         Picker("", selection: $searchMode) {
@@ -80,36 +79,39 @@ struct GeneralSettingsPane: View {
 
       Settings.Section(
         bottomDivider: true,
+        label: { Text("Transformation", tableName: "GeneralSettings") }
+      ) {
+        Picker("", selection: $activeTransformationID) {
+          Text("None", tableName: "GeneralSettings").tag(UUID?.none)
+          ForEach(transformations) { transformation in
+            Text(transformation.name).tag(UUID?.some(transformation.id))
+          }
+        }
+        .onChange(of: activeTransformationID) { refreshModifiers() }
+        .labelsHidden()
+        .frame(width: 180, alignment: .leading)
+      }
+
+      Settings.Section(
+        bottomDivider: true,
         label: { Text("Behavior", tableName: "GeneralSettings") }
       ) {
         Defaults.Toggle(key: .pasteByDefault) {
           Text("PasteAutomatically", tableName: "GeneralSettings")
         }
-        .onChange(refreshModifiers)
+        .onChange(of: Defaults[.pasteByDefault]) { refreshModifiers() }
         .fixedSize()
 
         Defaults.Toggle(key: .removeFormattingByDefault) {
           Text("PasteWithoutFormatting", tableName: "GeneralSettings")
         }
-        .onChange(refreshModifiers)
+        .onChange(of: Defaults[.removeFormattingByDefault]) { refreshModifiers() }
         .fixedSize()
 
-        HStack {
-          Defaults.Toggle(key: .applyTransformationByDefault) {
-            Text("PasteWithTransformation", tableName: "GeneralSettings")
-          }
-          .onChange(refreshModifiers)
-
-          Picker("", selection: $activeTransformationID) {
-            Text("None", tableName: "GeneralSettings").tag(UUID?.none)
-            ForEach(transformations) { transformation in
-              Text(transformation.name).tag(UUID?.some(transformation.id))
-            }
-          }
-          .labelsHidden()
-          .controlSize(.small)
-          .fixedSize()
+        Defaults.Toggle(key: .applyTransformationByDefault) {
+          Text("PasteWithTransformation", tableName: "GeneralSettings")
         }
+        .onChange(of: applyTransformationByDefault) { refreshModifiers() }
 
         Text(String(
           format: NSLocalizedString("Modifiers", tableName: "GeneralSettings", comment: ""),
@@ -136,10 +138,8 @@ struct GeneralSettingsPane: View {
     pasteModifier = modifierDescription(HistoryItemAction.paste)
     pasteWithoutFormatting = modifierDescription(HistoryItemAction.pasteWithoutFormatting)
     pasteWithTransformation = modifierDescription(HistoryItemAction.pasteWithTransformation)
-  }
-
-  private func refreshModifiers(_ sender: Sendable) {
-    refreshModifiers()
+    
+    Clipboard.shared.reapplyCurrentTransformation()
   }
 
   private func modifierDescription(_ action: HistoryItemAction) -> String {

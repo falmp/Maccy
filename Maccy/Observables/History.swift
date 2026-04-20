@@ -22,7 +22,7 @@ class History: ItemsContainer { // swiftlint:disable:this type_body_length
   var searchQuery: String = "" {
     didSet {
       throttler.throttle { [self] in
-        updateItems(search.search(string: searchQuery, within: all).map(\.object))
+        updateItems(search.search(string: searchQuery, within: all))
 
         if searchQuery.isEmpty {
           AppState.shared.navigator.select(item: unpinnedItems.first)
@@ -35,15 +35,21 @@ class History: ItemsContainer { // swiftlint:disable:this type_body_length
     }
   }
 
-  @ObservationIgnored
-  var all: [HistoryItemDecorator] = []
+  var pressedShortcutItem: HistoryItemDecorator? {
+    guard let event = NSApp.currentEvent else {
+      return nil
+    }
 
-  var firstVisibleItem: HistoryItemDecorator? {
-    items.first
-  }
+    let modifierFlags = event.modifierFlags
+      .intersection(.deviceIndependentFlagsMask)
+      .subtracting(.capsLock)
 
-  var lastVisibleItem: HistoryItemDecorator? {
-    items.last
+    guard HistoryItemAction(modifierFlags) != .unknown else {
+      return nil
+    }
+
+    let key = Sauce.shared.key(for: Int(event.keyCode))
+    return items.first { $0.shortcuts.contains(where: { $0.key == key }) }
   }
 
   private let search = Search()
@@ -53,30 +59,74 @@ class History: ItemsContainer { // swiftlint:disable:this type_body_length
   @ObservationIgnored
   private var sessionLog: [Int: HistoryItem] = [:]
 
+  @ObservationIgnored
+  var all: [HistoryItemDecorator] = []
+
   init() {
-    Task { @MainActor in
-      try? await self.load()
+    Task {
+      for await _ in Defaults.updates(.pasteByDefault, initial: false) {
+        updateShortcuts()
+      }
+    }
+
+    Task {
+      for await _ in Defaults.updates(.sortBy, initial: false) {
+        try? await load()
+      }
+    }
+
+    Task {
+      for await _ in Defaults.updates(.pinTo, initial: false) {
+        try? await load()
+      }
+    }
+
+    Task {
+      for await _ in Defaults.updates(.showSpecialSymbols, initial: false) {
+        for item in items {
+          await updateTitle(item: item, title: item.item.generateTitle())
+        }
+      }
+    }
+
+    Task {
+      for await _ in Defaults.updates(.imageMaxHeight, initial: false) {
+        for item in items {
+          await item.cleanupImages()
+        }
+      }
     }
   }
 
   @MainActor
   func load() async throws {
-    let fetchDescriptor = FetchDescriptor<HistoryItem>()
-    let historyItems = (try? Storage.shared.context.fetch(fetchDescriptor)) ?? []
-    all = sorter.sort(historyItems).map({ HistoryItemDecorator($0) })
+    let descriptor = FetchDescriptor<HistoryItem>()
+    let results = try Storage.shared.context.fetch(descriptor)
+    all = sorter.sort(results).map { HistoryItemDecorator($0) }
     items = all
-    
+
+    limitHistorySize(to: Defaults[.size])
+
     updateShortcuts()
-    
     Task {
       AppState.shared.popup.needsResize = true
     }
   }
 
   @MainActor
+  private func limitHistorySize(to maxSize: Int) {
+    let unpinned = all.filter(\.isUnpinned)
+    if unpinned.count >= maxSize {
+      unpinned[maxSize...].forEach(delete)
+    }
+  }
+
+  @MainActor
   func insertIntoStorage(_ item: HistoryItem) throws {
+    logger.info("Inserting item with id '\(item.title)'")
     Storage.shared.context.insert(item)
-    try Storage.shared.context.save()
+    Storage.shared.context.processPendingChanges()
+    try? Storage.shared.context.save()
   }
 
   @discardableResult
@@ -95,130 +145,169 @@ class History: ItemsContainer { // swiftlint:disable:this type_body_length
       item.numberOfCopies += existingHistoryItem.numberOfCopies
       item.pin = existingHistoryItem.pin
       item.title = existingHistoryItem.title
-      
+      if !item.fromMaccy {
+        item.application = existingHistoryItem.application
+      }
+      logger.info("Removing duplicate item '\(item.title)'")
       Storage.shared.context.delete(existingHistoryItem)
       removedItemIndex = all.firstIndex(where: { $0.item == existingHistoryItem })
-      if let index = removedItemIndex {
-        all.remove(at: index)
+      if let removedItemIndex {
+        all.remove(at: removedItemIndex)
+      }
+    } else {
+      Task {
+        Notifier.notify(body: item.title, sound: .write)
       }
     }
 
-    let itemDecorator = HistoryItemDecorator(item)
-    
-    let sortedItems = sorter.sort(all.map(\.item) + [item])
-    if let index = sortedItems.firstIndex(of: item) {
-      all.insert(itemDecorator, at: index)
+    limitHistorySize(to: Defaults[.size] - 1)
+
+    sessionLog[Clipboard.shared.changeCount] = item
+
+    var itemDecorator: HistoryItemDecorator
+    if let pin = item.pin {
+      itemDecorator = HistoryItemDecorator(item, shortcuts: KeyShortcut.create(character: pin))
+      if let removedItemIndex {
+        all.insert(itemDecorator, at: removedItemIndex)
+      }
+    } else {
+      itemDecorator = HistoryItemDecorator(item)
+
+      let sortedItems = sorter.sort(all.map(\.item) + [item])
+      if let index = sortedItems.firstIndex(of: item) {
+        all.insert(itemDecorator, at: index)
+      }
+
+      items = all
+      updateUnpinnedShortcuts()
+      AppState.shared.popup.needsResize = true
     }
 
-    items = all
-    updateUnpinnedShortcuts()
-    
-    sessionLog[Clipboard.shared.changeCount] = item
-    
-    AppState.shared.popup.needsResize = true
-    
     return itemDecorator
   }
 
   @MainActor
-  func removeAll() {
-    items.forEach({ $0.item.contents.forEach({ Storage.shared.context.delete($0) }) })
-    try? Storage.shared.context.delete(model: HistoryItem.self)
-    try? Storage.shared.context.save()
-    all = []
-    items = []
+  private func withLogging(_ msg: String, _ block: () throws -> Void) rethrows {
+    func dataCounts() -> String {
+      let historyItemCount = try? Storage.shared.context.fetchCount(FetchDescriptor<HistoryItem>())
+      let historyContentCount = try? Storage.shared.context.fetchCount(FetchDescriptor<HistoryItemContent>())
+      return "HistoryItem=\(historyItemCount ?? 0) HistoryItemContent=\(historyContentCount ?? 0)"
+    }
+
+    logger.info("\(msg) Before: \(dataCounts())")
+    try? block()
+    logger.info("\(msg) After: \(dataCounts())")
   }
 
   @MainActor
   func clear() {
-    if Defaults[.suppressClearAlert] {
-      removeAll()
-    } else {
-      let alert = NSAlert()
-      alert.messageText = NSLocalizedString("ClearHistoryTitle", comment: "")
-      alert.informativeText = NSLocalizedString("ClearHistoryMessage", comment: "")
-      alert.addButton(withTitle: NSLocalizedString("ClearHistoryConfirm", comment: ""))
-      alert.addButton(withTitle: NSLocalizedString("ClearHistoryCancel", comment: ""))
-      alert.showsSuppressionButton = true
-
-      let response = alert.runModal()
-      if response == .alertFirstButtonReturn {
-        if alert.suppressionButton?.state == .on {
-          Defaults[.suppressClearAlert] = true
+    withLogging("Clearing history") {
+      all.forEach { item in
+        if item.isUnpinned {
+          cleanup(item)
         }
-
-        removeAll()
       }
+      all.removeAll(where: \.isUnpinned)
+      sessionLog.removeValues { $0.pin == nil }
+      items = all
+
+      try? Storage.shared.context.transaction {
+        try? Storage.shared.context.delete(
+          model: HistoryItem.self,
+          where: #Predicate { $0.pin == nil }
+        )
+        try? Storage.shared.context.delete(
+          model: HistoryItemContent.self,
+          where: #Predicate { $0.item?.pin == nil }
+        )
+      }
+      Storage.shared.context.processPendingChanges()
+      try? Storage.shared.context.save()
+    }
+
+    Clipboard.shared.clear()
+    AppState.shared.popup.close()
+    Task {
+      AppState.shared.popup.needsResize = true
     }
   }
 
   @MainActor
   func clearAll() {
-    removeAll()
+    withLogging("Clearing all history") {
+      all.forEach { item in
+        cleanup(item)
+      }
+      all.removeAll()
+      sessionLog.removeAll()
+      items = all
+
+      try? Storage.shared.context.delete(model: HistoryItem.self)
+      Storage.shared.context.processPendingChanges()
+      try? Storage.shared.context.save()
+    }
+
+    Clipboard.shared.clear()
+    AppState.shared.popup.close()
+    Task {
+      AppState.shared.popup.needsResize = true
+    }
   }
 
   @MainActor
   func delete(_ item: HistoryItemDecorator?) {
-    guard let item else {
-      return
+    guard let item else { return }
+
+    cleanup(item)
+    withLogging("Removing history item") {
+      Storage.shared.context.delete(item.item)
+      Storage.shared.context.processPendingChanges()
+      try? Storage.shared.context.save()
     }
 
-    Storage.shared.context.delete(item.item)
-    try? Storage.shared.context.save()
-    
     all.removeAll { $0 == item }
     items.removeAll { $0 == item }
+    sessionLog.removeValues { $0 == item.item }
 
     updateUnpinnedShortcuts()
-    AppState.shared.popup.needsResize = true
+    Task {
+      AppState.shared.popup.needsResize = true
+    }
+  }
+
+  @MainActor
+  private func cleanup(_ item: HistoryItemDecorator) {
+    item.cleanupImages()
+  }
+
+  private func currentModifierFlags() -> NSEvent.ModifierFlags {
+    return NSApp.currentEvent?.modifierFlags
+      .intersection(.deviceIndependentFlagsMask)
+      .subtracting([.capsLock, .numericPad, .function]) ?? []
   }
 
   @MainActor
   func select(_ item: HistoryItemDecorator?) {
-    guard let item else {
-      return
-    }
+    guard let item else { return }
 
     let modifierFlags = currentModifierFlags()
+    let action = HistoryItemAction(modifierFlags)
 
-    // Explicitly hide the app first to return focus to the target application.
-    // This is critical in the new SwiftUI architecture to ensure Cmd+V is received.
-    NSApp.hide(nil)
     AppState.shared.popup.close()
 
-    if modifierFlags.isEmpty {
-      if Defaults[.applyTransformationByDefault],
-         let activeID = Defaults[.activeTransformationID],
-         let transformation = Defaults[.transformations].first(where: { $0.id == activeID }) {
-        Clipboard.shared.copy(item.item, transform: transformation.apply)
-      } else {
-        Clipboard.shared.copy(item.item, removeFormatting: Defaults[.removeFormattingByDefault])
-      }
+    let removeFormatting = (action == .pasteWithoutFormatting) ||
+                           (modifierFlags.isEmpty && Defaults[.removeFormattingByDefault])
+    Clipboard.shared.copy(item.item, removeFormatting: removeFormatting)
 
-      if Defaults[.pasteByDefault] {
-        Clipboard.shared.paste()
-      }
-    } else {
-      switch HistoryItemAction(modifierFlags) {
-      case .copy:
-        Clipboard.shared.copy(item.item)
-      case .paste:
-        Clipboard.shared.copy(item.item)
-        Clipboard.shared.paste()
-      case .pasteWithoutFormatting:
-        Clipboard.shared.copy(item.item, removeFormatting: true)
-        Clipboard.shared.paste()
-      case .pasteWithTransformation:
-        if let activeID = Defaults[.activeTransformationID],
-           let transformation = Defaults[.transformations].first(where: { $0.id == activeID }) {
-          Clipboard.shared.copy(item.item, transform: transformation.apply)
-        } else {
-          Clipboard.shared.copy(item.item)
-        }
-        Clipboard.shared.paste()
-      case .unknown:
-        return
-      }
+    let shouldTransform = (action == .pasteWithTransformation) ||
+                          (modifierFlags.isEmpty && Defaults[.applyTransformationByDefault])
+    if shouldTransform {
+      Clipboard.shared.reapplyCurrentTransformation()
+    }
+
+    let shouldPaste = (action != .copy) && (!modifierFlags.isEmpty || Defaults[.pasteByDefault])
+    if shouldPaste {
+      paste()
     }
 
     Task {
@@ -233,43 +322,24 @@ class History: ItemsContainer { // swiftlint:disable:this type_body_length
     PasteStack.initializeIfNeeded()
 
     let modifierFlags = currentModifierFlags()
+    let action = HistoryItemAction(modifierFlags)
 
     let stack = PasteStack(items: selection.items, modifierFlags: modifierFlags)
     pasteStack = stack
 
-    // Explicitly hide the app first.
-    NSApp.hide(nil)
+    logger.info("Initialising PasteStack with \(stack.items.count) items")
+    logger.info("Copying \(item.item.title) from PasteStack")
+
     AppState.shared.popup.close()
 
-    if modifierFlags.isEmpty {
-      if Defaults[.applyTransformationByDefault],
-         let activeID = Defaults[.activeTransformationID],
-         let transformation = Defaults[.transformations].first(where: { $0.id == activeID }) {
-        Clipboard.shared.copy(item.item, transform: transformation.apply)
-      } else {
-        Clipboard.shared.copy(item.item, removeFormatting: Defaults[.removeFormattingByDefault])
-      }
-    } else {
-      switch HistoryItemAction(modifierFlags) {
-      case .copy:
-        Clipboard.shared.copy(item.item)
-      case .paste:
-        Clipboard.shared.copy(item.item)
-        Clipboard.shared.paste()
-      case .pasteWithoutFormatting:
-        Clipboard.shared.copy(item.item, removeFormatting: true)
-        Clipboard.shared.paste()
-      case .pasteWithTransformation:
-        if let activeID = Defaults[.activeTransformationID],
-           let transformation = Defaults[.transformations].first(where: { $0.id == activeID }) {
-          Clipboard.shared.copy(item.item, transform: transformation.apply)
-        } else {
-          Clipboard.shared.copy(item.item)
-        }
-        Clipboard.shared.paste()
-      case .unknown:
-        return
-      }
+    let removeFormatting = (action == .pasteWithoutFormatting) ||
+                           (modifierFlags.isEmpty && Defaults[.removeFormattingByDefault])
+    Clipboard.shared.copy(item.item, removeFormatting: removeFormatting)
+
+    let shouldTransform = (action == .pasteWithTransformation) ||
+                          (modifierFlags.isEmpty && Defaults[.applyTransformationByDefault])
+    if shouldTransform {
+      Clipboard.shared.reapplyCurrentTransformation()
     }
 
     Task {
@@ -284,43 +354,38 @@ class History: ItemsContainer { // swiftlint:disable:this type_body_length
 
     guard let item = stack.items.first else {
       pasteStack = nil
+      logger.info("PasteStack is empty")
       return
     }
+
+    logger.info("PasteStack pasted \(item.item.title)")
 
     stack.items.removeFirst()
 
     guard let nextItem = stack.items.first else {
       pasteStack = nil
+      logger.info("PasteStack is empty")
       return
     }
 
+    logger.info("Copying \(nextItem.item.title) from PasteStack. \(stack.items.count) items remaining in stack.")
+
     Task { @MainActor in
-      if stack.modifierFlags.isEmpty {
-        if Defaults[.applyTransformationByDefault],
-           let activeID = Defaults[.activeTransformationID],
-           let transformation = Defaults[.transformations].first(where: { $0.id == activeID }) {
-          Clipboard.shared.copy(nextItem.item, transform: transformation.apply)
-        } else {
-          Clipboard.shared.copy(nextItem.item, removeFormatting: Defaults[.removeFormattingByDefault])
-        }
-      } else {
-        switch HistoryItemAction(stack.modifierFlags) {
-        case .copy:
-          Clipboard.shared.copy(nextItem.item)
-        case .paste:
-          Clipboard.shared.copy(nextItem.item)
-        case .pasteWithoutFormatting:
-          Clipboard.shared.copy(nextItem.item, removeFormatting: true)
-        case .pasteWithTransformation:
-          if let activeID = Defaults[.activeTransformationID],
-             let transformation = Defaults[.transformations].first(where: { $0.id == activeID }) {
-            Clipboard.shared.copy(nextItem.item, transform: transformation.apply)
-          } else {
-            Clipboard.shared.copy(nextItem.item)
-          }
-        case .unknown:
-          return
-        }
+      let modifierFlags = stack.modifierFlags
+      let action = HistoryItemAction(modifierFlags)
+
+      let removeFormatting = (action == .pasteWithoutFormatting) ||
+                             (modifierFlags.isEmpty && Defaults[.removeFormattingByDefault])
+      Clipboard.shared.copy(nextItem.item, removeFormatting: removeFormatting)
+
+      let shouldTransform = (action == .pasteWithTransformation) ||
+                            (modifierFlags.isEmpty && Defaults[.applyTransformationByDefault])
+      if shouldTransform {
+        Clipboard.shared.reapplyCurrentTransformation()
+      }
+
+      if action != .copy {
+        paste()
       }
     }
   }
@@ -329,6 +394,7 @@ class History: ItemsContainer { // swiftlint:disable:this type_body_length
     guard pasteStack != nil else {
       return
     }
+    logger.info("Interrupting PasteStack")
     pasteStack = nil
   }
 
@@ -349,24 +415,42 @@ class History: ItemsContainer { // swiftlint:disable:this type_body_length
 
     searchQuery = ""
     updateUnpinnedShortcuts()
-  }
-
-  @MainActor
-  func findSimilarItem(_ item: HistoryItem) -> HistoryItem? {
-    return all.first(where: { $0.item.supersedes(item) })?.item
-  }
-
-  @MainActor
-  var pressedShortcutItem: HistoryItemDecorator? {
-    if let event = NSApp.currentEvent, event.type == .keyDown {
-      let key = Sauce.shared.key(for: Int(event.keyCode))
-      return items.first { $0.shortcuts.contains(where: { $0.key == key }) }
+    if item.isUnpinned {
+      AppState.shared.navigator.scrollTarget = item.id
     }
-    return AppState.shared.navigator.selection.first ?? items.first
   }
 
-  private func updateItems(_ newItems: [HistoryItemDecorator]) {
-    items = newItems
+  @MainActor
+  private func findSimilarItem(_ item: HistoryItem) -> HistoryItem? {
+    let descriptor = FetchDescriptor<HistoryItem>()
+    if let all = try? Storage.shared.context.fetch(descriptor) {
+      let duplicates = all.filter({ $0 == item || $0.supersedes(item) })
+      if duplicates.count > 1 {
+        return duplicates.first(where: { $0 != item })
+      } else {
+        return isModified(item)
+      }
+    }
+
+    return item
+  }
+
+  private func isModified(_ item: HistoryItem) -> HistoryItem? {
+    if let modified = item.modified, sessionLog.keys.contains(modified) {
+      return sessionLog[modified]
+    }
+
+    return nil
+  }
+
+  private func updateItems(_ newItems: [Search.SearchResult]) {
+    items = newItems.map { result in
+      let item = result.object
+      item.highlight(searchQuery, result.ranges)
+
+      return item
+    }
+
     updateUnpinnedShortcuts()
   }
 
@@ -378,6 +462,12 @@ class History: ItemsContainer { // swiftlint:disable:this type_body_length
     }
 
     updateUnpinnedShortcuts()
+  }
+
+  @MainActor
+  private func updateTitle(item: HistoryItemDecorator, title: String) {
+    item.title = title
+    item.item.title = title
   }
 
   private func updateUnpinnedShortcuts() {
@@ -393,13 +483,12 @@ class History: ItemsContainer { // swiftlint:disable:this type_body_length
     }
   }
 
-  private func isModified(_ item: HistoryItem) -> String? {
-    return item.pin
-  }
-
-  private func currentModifierFlags() -> NSEvent.ModifierFlags {
-    return NSApp.currentEvent?.modifierFlags
-      .intersection(.deviceIndependentFlagsMask)
-      .subtracting([.capsLock, .numericPad, .function]) ?? []
+  private func paste() {
+    Task {
+      try? await Task.sleep(nanoseconds: 100_000_000)
+      await MainActor.run {
+        Clipboard.shared.paste()
+      }
+    }
   }
 }
